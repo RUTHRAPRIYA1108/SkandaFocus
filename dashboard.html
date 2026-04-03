@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkandaFocus — Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <meta name="description" content="Dramadoro dashboard: view analytics, session history and redeem rewards." />
+</head>
+<body class="dashboard-page">
+  <header class="site-header">
+    <div class="container">
+      <h1 class="brand">SkandaFocus</h1>
+      <nav class="main-nav">
+        <a href="index.html">Home</a>
+        <a href="timer.html">Timer</a>
+        <a href="login.html">Login</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero dashboard-hero">
+      <h2>Your study dashboard</h2>
+      <p>Track your progress, redeem rewards, and stay motivated with a fresh SkandaFocus UI.</p>
+    </section>
+
+    <section class="dashboard-overview">
+      <div class="user-card">
+        <h2 id="userName">Welcome</h2>
+        <p class="muted" id="userEmail">Not signed in</p>
+      </div>
+
+      <div class="stats-card">
+        <h3>Points</h3>
+        <div class="points-value" id="pointsCount">0</div>
+        <div class="stats-actions">
+          <button class="btn" id="redeemBtn">Redeem</button>
+          <button class="btn" id="logoutBtn">Logout</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="analytics module">
+      <h3>Study analytics</h3>
+      <canvas id="analyticsChart" width="640" height="180" aria-label="Study analytics chart"></canvas>
+    </section>
+
+    <section class="history log-card module">
+      <h3>Recent sessions</h3>
+      <ul id="sessionList" class="session-log"></ul>
+      <p><button class="btn" id="clearHistory">Clear history</button></p>
+    </section>
+
+    <section class="recommendations module">
+      <h3>Recommended rewards</h3>
+      <div class="recommendation-grid">
+        <div class="card">
+          <img src="video clip.png" alt="Clip">
+          <h4>Short Clip</h4>
+          <p class="muted">Cost: 5 points</p>
+          <button class="btn tiny" onclick="dashboardRedeem(5)">Redeem</button>
+        </div>
+        <div class="card">
+          <img src="book picture.png" alt="Read">
+          <h4>Quick Read</h4>
+          <p class="muted">Cost: 10 points</p>
+          <button class="btn tiny" onclick="dashboardRedeem(10)">Redeem</button>
+        </div>
+        <div class="card">
+          <img src="game pic.png" alt="Random Game">
+          <h4>Random Game</h4>
+          <p class="muted">Cost: 20 points</p>
+          <button class="btn tiny" onclick="dashboardRedeem(20)">Redeem</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="rewardModal" class="modal hidden" role="dialog" aria-hidden="true">
+    <div class="modal-content">
+      <button class="modal-close" aria-label="Close" onclick="closeReward()">×</button>
+      <div id="rewardBody"></div>
+    </div>
+  </div>
+
+  <footer class="site-footer small container">
+    <p>© <span id="year"></span> Dramadoro</p>
+  </footer>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="timer.js"></script>
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    let currentUser = null;
+
+    function loadDashboard(){
+      const nameEl = document.getElementById('userName');
+      const emailEl = document.getElementById('userEmail');
+      const pointsEl = document.getElementById('pointsCount');
+
+      if (currentUser) {
+        nameEl.textContent = currentUser.displayName || currentUser.email.split('@')[0];
+        emailEl.textContent = currentUser.email;
+      } else {
+        nameEl.textContent = 'Hello';
+        emailEl.textContent = 'Not signed in';
+      }
+
+      pointsEl.textContent = window.dramadoro && window.dramadoro.getPoints ? window.dramadoro.getPoints() : '0';
+
+      if (window.dramadoro && window.dramadoro.renderChart) {
+        window.dramadoro.renderChart('analyticsChart', 7);
+      }
+
+      const sessions = window.dramadoro && window.dramadoro.loadSessions ? window.dramadoro.loadSessions() : [];
+      const list = document.getElementById('sessionList');
+      if (!sessions || sessions.length === 0) {
+        list.innerHTML = '<li class="muted">No sessions yet. Start a study session to see analytics.</li>';
+      } else {
+        list.innerHTML = sessions.slice(0, 50).map(s => {
+          const d = new Date(s.end || s.start);
+          const time = d.toLocaleString();
+          const dur = s.duration ? `${Math.round(s.duration/60)}m` : '-';
+          return `<li><strong>${s.type}</strong> — ${time} (${dur}) ${s.completed ? '<span class="tag">done</span>' : ''}</li>`;
+        }).join('');
+      }
+    }
+
+    // Redeem flow
+    function dashboardRedeem(cost){
+      const points = window.dramadoro.getPoints();
+      if (points < cost) return alert('Not enough points to redeem.');
+
+      if (cost === 20) {
+        openRandomGameReward(cost);
+        return;
+      }
+
+      if (cost === 10) {
+        openQuickReadReward(cost);
+        return;
+      }
+
+      if (cost === 5) {
+        openVideoClipReward(cost);
+        return;
+      }
+
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `<h3>Redeem for ${cost} points</h3><p>You will spend ${cost} points. Proceed?</p><p><button class="btn primary" id="confirmRedeem">Confirm</button> <button class="btn" onclick="closeReward()">Cancel</button></p>`;
+      const modal = document.getElementById('rewardModal');
+      modal.classList.remove('hidden');
+      modal.setAttribute('aria-hidden','false');
+      document.getElementById('confirmRedeem').addEventListener('click', () => {
+        window.dramadoro.deductPoints(cost);
+        document.getElementById('pointsCount').textContent = window.dramadoro.getPoints();
+        closeReward();
+        alert('Reward unlocked! Enjoy.');
+      });
+    }
+
+    function openQuickReadReward(cost) {
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `
+        <h3>Quick Read</h3>
+        <p>You will spend ${cost} points to unlock the book.</p>
+        <p><button class="btn primary" id="confirmRedeem">Confirm</button> <button class="btn" onclick="closeReward()">Cancel</button></p>
+      `;
+      const modal = document.getElementById('rewardModal');
+      modal.classList.remove('hidden');
+      modal.setAttribute('aria-hidden','false');
+      document.getElementById('confirmRedeem').addEventListener('click', () => {
+        window.dramadoro.deductPoints(cost);
+        document.getElementById('pointsCount').textContent = window.dramadoro.getPoints();
+        showQuickRead();
+      });
+    }
+
+    const videoClips = [
+      {
+        title: 'Relaxing Nature Clip',
+        src: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4'
+      },
+      {
+        title: 'River Flow Clip',
+        src: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/river.mp4'
+      },
+      {
+        title: 'Bee Garden Clip',
+        src: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/bee.mp4'
+      }
+    ];
+
+    function openVideoClipReward(cost) {
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `
+        <h3>Short Clip</h3>
+        <p>You will spend ${cost} points to unlock a random video.</p>
+        <p><button class="btn primary" id="confirmRedeem">Confirm</button> <button class="btn" onclick="closeReward()">Cancel</button></p>
+      `;
+      const modal = document.getElementById('rewardModal');
+      modal.classList.remove('hidden');
+      modal.setAttribute('aria-hidden','false');
+      document.getElementById('confirmRedeem').addEventListener('click', () => {
+        window.dramadoro.deductPoints(cost);
+        document.getElementById('pointsCount').textContent = window.dramadoro.getPoints();
+        showVideoClip();
+      });
+    }
+
+    function showVideoClip() {
+      const clip = videoClips[Math.floor(Math.random() * videoClips.length)];
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `
+        <h3>${clip.title}</h3>
+        <div class="video-player-wrapper">
+          <video class="reward-video" controls autoplay>
+            <source src="${clip.src}" type="video/mp4">
+            Your browser does not support video playback.
+          </video>
+        </div>
+        <p><a href="https://www.youtube.com/results?search_query=short+relaxing+videos" target="_blank" class="btn">Watch more short videos on YouTube</a></p>
+        <p><button class="btn" onclick="closeReward()">Close</button></p>
+      `;
+    }
+
+    function showQuickRead() {
+      const pdfFile = encodeURI('I Decided to live as me_compressed.pdf');
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `
+        <h3>Quick Read</h3>
+        <p>You unlocked the book. If the preview does not appear, open it in a new tab.</p>
+        <div class="pdf-viewer-wrapper">
+          <iframe src="${pdfFile}" title="Quick Read Book" frameborder="0"></iframe>
+        </div>
+        <p><a class="btn primary" href="${pdfFile}" target="_blank" rel="noopener">Open in new tab</a>
+        <button class="btn" onclick="closeReward()">Close</button></p>
+      `;
+    }
+
+    const rewardGames = [
+      {
+        title: 'Guess the Number',
+        description: 'Guess a number between 1 and 10. You have 3 tries.',
+        render: (container) => {
+          const target = Math.floor(Math.random() * 10) + 1;
+          let tries = 3;
+          container.innerHTML = `
+            <p>Enter a number and press Try.</p>
+            <input type="number" id="guessInput" min="1" max="10" placeholder="1-10" />
+            <button class="btn" id="tryGuess">Try</button>
+            <p id="guessMessage" class="muted"></p>
+          `;
+          container.querySelector('#tryGuess').addEventListener('click', () => {
+            const guess = Number(container.querySelector('#guessInput').value);
+            const message = container.querySelector('#guessMessage');
+            if (!guess || guess < 1 || guess > 10) {
+              message.textContent = 'Please enter a number between 1 and 10.';
+              return;
+            }
+            tries -= 1;
+            if (guess === target) {
+              message.textContent = '🎉 Great! You guessed it right.';
+              return;
+            }
+            if (tries <= 0) {
+              message.textContent = `Game over. The number was ${target}.`;
+              container.querySelector('#tryGuess').disabled = true;
+              return;
+            }
+            message.textContent = guess < target ? `Too low. ${tries} tries left.` : `Too high. ${tries} tries left.`;
+          });
+        }
+      },
+      {
+        title: 'Click Speed Test',
+        description: 'Click the button 15 times as fast as possible.',
+        render: (container) => {
+          let clicks = 0;
+          container.innerHTML = `
+            <p>Click the button until you reach 15 clicks.</p>
+            <button class="btn" id="speedClick">Click me</button>
+            <p class="muted">Clicks: <span id="clickCount">0</span></p>
+            <p id="speedMessage" class="muted"></p>
+          `;
+          container.querySelector('#speedClick').addEventListener('click', () => {
+            clicks += 1;
+            container.querySelector('#clickCount').textContent = clicks;
+            if (clicks >= 15) {
+              container.querySelector('#speedMessage').textContent = '✅ Nice! You completed the speed test.';
+              container.querySelector('#speedClick').disabled = true;
+            }
+          });
+        }
+      }
+    ];
+
+    function showRandomGame() {
+      const game = rewardGames[Math.floor(Math.random() * rewardGames.length)];
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = `
+        <h3>${game.title}</h3>
+        <p>${game.description}</p>
+        <div id="gameArea"></div>
+        <p><button class="btn" onclick="closeReward()">Close</button></p>
+      `;
+      game.render(document.getElementById('gameArea'));
+    }
+
+    function closeReward(){
+      const modal = document.getElementById('rewardModal');
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden','true');
+    }
+
+    // Logout
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      if (auth) {
+        auth.signOut().catch(() => {});
+      }
+      localStorage.removeItem('dramadoro_session');
+      window.location.href = 'index.html';
+    });
+
+    document.getElementById('clearHistory').addEventListener('click', () => {
+      if (!confirm('Clear all session history?')) return;
+      if (window.dramadoro && window.dramadoro.clearSessions) {
+        window.dramadoro.clearSessions();
+      }
+      loadDashboard();
+    });
+
+    document.getElementById('redeemBtn').addEventListener('click', () => { dashboardRedeem(5); });
+
+    auth.onAuthStateChanged((user) => {
+      currentUser = user;
+      loadDashboard();
+    });
+  </script>
+</body>
+</html>

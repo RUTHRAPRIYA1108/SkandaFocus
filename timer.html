@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkandaFocus— Timer</title>
+  <link rel="stylesheet" href="style.css">
+  <meta name="description" content="Study timer with breaks, rewards and session logging." />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1 class="brand">SkandaFocus</h1>
+      <nav class="main-nav">
+        <a href="index.html">Home</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="login.html">Login</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container timer-page">
+    <section class="timer-card">
+      <h2 id="sessionLabel">Ready to Study</h2>
+      <div class="timer-display" role="timer" aria-live="polite">
+        <svg viewBox="0 0 120 120" class="progress-ring" aria-hidden="true">
+          <circle cx="60" cy="60" r="52" class="ring-bg"></circle>
+          <circle cx="60" cy="60" r="52" class="ring-progress" id="ringProgress"></circle>
+        </svg>
+        <div class="time" id="timeDisplay">25:00</div>
+      </div>
+
+      <div class="controls">
+        <button class="btn primary" id="startBtn">Start</button>
+        <button class="btn" id="pauseBtn" disabled>Pause</button>
+        <button class="btn" id="resetBtn">Reset</button>
+      </div>
+
+      <div class="settings">
+        <h3>Session settings</h3>
+        <label>Study (minutes)
+          <input id="studyMinutes" type="number" min="1" value="25">
+        </label>
+        <label>Short break (minutes)
+          <input id="shortBreak" type="number" min="1" value="5">
+        </label>
+        <label>Long break (minutes)
+          <input id="longBreak" type="number" min="5" value="15">
+        </label>
+        <label>Long break every
+          <input id="longEvery" type="number" min="1" value="4"> sessions
+        </label>
+      </div>
+
+      <div class="session-info">
+        <p>Completed sessions: <strong id="completedCount">0</strong></p>
+        <p>Your points: <strong id="pointsCount">0</strong> <button class="btn tiny" id="redeemBtn">Redeem</button></p>
+      </div>
+
+      <section class="breaks module" aria-label="Break suggestions">
+        <h3>Break suggestions</h3>
+        <ul class="muted" style="margin:12px 0 8px;padding-left:18px;line-height:1.6">
+          <li>Drink water</li>
+          <li>Stretch for 5 minutes</li>
+          <li>Take a short walk</li>
+        </ul>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="breakDrink" data-min="2">Start 2m Hydration Break</button>
+          <button class="btn" id="breakStretch" data-min="5">Start 5m Stretch</button>
+          <button class="btn" id="breakWalk" data-min="10">Start 10m Walk</button>
+          <!-- PDF reward card -->
+          <div style="display:flex;align-items:center;margin-left:8px">
+            <button class="btn" id="pdfPreviewBtn">Preview Book (PDF)</button>
+          </div>
+        </div>
+      </section>
+    </section>
+<section class="log-card">
+      <h3>Session history</h3>
+      <ul id="sessionLog" class="session-log" aria-live="polite"></ul>
+      <p><button class="btn" id="clearLog">Clear history</button></p>
+    </section>
+  </main>
+
+  <div id="rewardModal" class="modal hidden" role="dialog" aria-hidden="true">
+    <div class="modal-content">
+      <button class="modal-close" aria-label="Close" onclick="closeReward()">×</button>
+      <div id="rewardBody"></div>
+    </div>
+  </div>
+
+  <footer class="site-footer small container">
+    <p>© <span id="year"></span> Dramadoro</p>
+  </footer>
+
+  <script src="timer.js"></script>
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Elements
+    const timeDisplay = document.getElementById('timeDisplay');
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const studyInput = document.getElementById('studyMinutes');
+    const shortBreakInput = document.getElementById('shortBreak');
+    const longBreakInput = document.getElementById('longBreak');
+    const longEveryInput = document.getElementById('longEvery');
+    const completedCountEl = document.getElementById('completedCount');
+    const pointsCountEl = document.getElementById('pointsCount');
+    const sessionLogEl = document.getElementById('sessionLog');
+    const redeemBtn = document.getElementById('redeemBtn');
+    const clearLogBtn = document.getElementById('clearLog');
+    const sessionLabel = document.getElementById('sessionLabel');
+    const ring = document.getElementById('ringProgress');
+
+    // Timer state
+    let timer = null;
+    let remaining = 25 * 60; // seconds
+    let total = 25 * 60;
+    let mode = 'study'; // 'study' | 'short' | 'long'
+    let completedSessions = 0;
+
+    // load persisted data
+    function loadState() {
+      const sessions = loadSessions();
+      completedSessions = sessions.filter(s => s.type === 'study' && s.completed).length;
+      completedCountEl.textContent = completedSessions;
+
+      const userPoints = getUserPoints();
+      pointsCountEl.textContent = userPoints;
+
+      renderLog(sessions);
+    }
+
+    function formatTime(s) {
+      const mm = String(Math.floor(s / 60)).padStart(2,'0');
+      const ss = String(s % 60).padStart(2,'0');
+      return `${mm}:${ss}`;
+    }
+
+    function setDisplayForMode() {
+      if (mode === 'study') {
+        total = parseInt(studyInput.value, 10) * 60;
+        sessionLabel.textContent = 'Study Session';
+      } else if (mode === 'short') {
+        total = parseInt(shortBreakInput.value, 10) * 60;
+        sessionLabel.textContent = 'Short Break';
+      } else {
+        total = parseInt(longBreakInput.value, 10) * 60;
+        sessionLabel.textContent = 'Long Break';
+      }
+      remaining = total;
+      updateDisplay();
+    }
+
+    function updateDisplay() {
+      timeDisplay.textContent = formatTime(remaining);
+      // progress ring update
+      const radius = 52;
+      const circumference = 2 * Math.PI * radius;
+      const pct = total ? (remaining / total) : 0;
+      ring.style.strokeDasharray = `${circumference} ${circumference}`;
+      ring.style.strokeDashoffset = `${Math.round(circumference * (1 - pct))}`;
+    }
+
+    function tick() {
+      if (remaining <= 0) {
+        clearInterval(timer);
+        timer = null;
+        onComplete();
+        return;
+      }
+      remaining -= 1;
+      updateDisplay();
+    }
+
+    function startTimer() {
+      if (timer) return;
+      timer = setInterval(tick, 1000);
+      startBtn.disabled = true;
+      pauseBtn.disabled = false;
+      // record session start
+      currentSession = { type: mode === 'study' ? 'study' : (mode === 'short' ? 'short' : 'long'), start: Date.now(), completed: false };
+    }
+
+    function pauseTimer() {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+      startBtn.disabled = false;
+      pauseBtn.disabled = true;
+    }
+
+    function resetTimer() {
+      pauseTimer();
+      setDisplayForMode();
+    }
+
+    let currentSession = null;
+
+    function onComplete() {
+      // mark session complete and persist
+      if (!currentSession) currentSession = { type: mode === 'study' ? 'study' : (mode === 'short' ? 'short' : 'long'), start: Date.now() - total*1000 };
+      currentSession.completed = true;
+      currentSession.end = Date.now();
+      currentSession.duration = (currentSession.end - currentSession.start) / 1000;
+      saveSession(currentSession);
+
+      if (currentSession.type === 'study') {
+        completedSessions += 1;
+        completedCountEl.textContent = completedSessions;
+        // award points depending on session length (demo logic)
+        const points = Math.max(1, Math.round((currentSession.duration / 60) / 2)); // 1 point per 2 minutes
+        addUserPoints(points);
+        pointsCountEl.textContent = getUserPoints();
+        showToast(`Study session complete! You earned ${points} points.`);
+      } else {
+        showToast('Break finished. Back to focus soon!');
+      }
+
+      // auto-switch: if we just finished a study session, trigger break logic
+      if (currentSession.type === 'study') {
+        const shouldLong = (completedSessions % parseInt(longEveryInput.value, 10)) === 0;
+        mode = shouldLong ? 'long' : 'short';
+      } else {
+        mode = 'study';
+      }
+
+      currentSession = null;
+      setDisplayForMode();
+      startBtn.disabled = false;
+      pauseBtn.disabled = true;
+    }
+
+    // Sessions persistence
+    function loadSessions() {
+      const raw = localStorage.getItem('SkandaFocus_sessions');
+      if (!raw) return [];
+      try { return JSON.parse(raw); } catch (e) { return []; }
+    }
+    function saveSession(sess) {
+      const arr = loadSessions();
+      arr.unshift(sess);
+      localStorage.setItem('SkandaFocus_sessions', JSON.stringify(arr.slice(0, 200))); // keep recent 200
+      renderLog(arr);
+    }
+    function clearSessions() {
+      localStorage.removeItem('SkandaFocus_sessions');
+      renderLog([]);
+      completedSessions = 0;
+      completedCountEl.textContent = '0';
+    }
+
+    function renderLog(arr) {
+      const items = arr || loadSessions();
+      sessionLogEl.innerHTML = items.map(s => {
+        const d = new Date(s.end || s.start);
+        const time = d.toLocaleString();
+        const dur = s.duration ? `${Math.round(s.duration/60)}m` : '-';
+        return `<li><strong>${s.type}</strong> — ${time} (${dur}) ${s.completed ? '<span class="tag">done</span>' : ''}</li>`;
+      }).join('');
+    }
+
+    // User points handling
+    function getUserPoints() {
+      const session = loadSessionUser();
+      if (!session || !session.email) return Number(localStorage.getItem('SkandaFocus_guest_points') || 0);
+      const users = loadUsers();
+      const u = users[session.email];
+      return u ? (u.points || 0) : 0;
+    }
+    function addUserPoints(n) {
+      const session = loadSessionUser();
+      if (!session || !session.email) {
+        const cur = Number(localStorage.getItem('SkandaFocus_guest_points') || 0);
+        localStorage.setItem('SkandaFocus_guest_points', String(cur + n));
+        return;
+      }
+      const users = loadUsers();
+      if (!users[session.email]) users[session.email] = { points: 0 };
+      users[session.email].points = (users[session.email].points || 0) + n;
+      localStorage.setItem('SkandaFocus_users', JSON.stringify(users));
+    }
+
+    function loadUsers() {
+      try { return JSON.parse(localStorage.getItem('SkandaFocus_users') || '{}'); } catch(e){ return {}; }
+    }
+    function loadSessionUser() {
+      try { return JSON.parse(localStorage.getItem('SkandaFocus_session') || 'null'); } catch(e){ return null; }
+    }
+
+    // UI helpers
+    function showToast(msg) {
+      // simple transient message via status element
+      const s = document.createElement('div');
+      s.className = 'toast';
+      s.textContent = msg;
+      document.body.appendChild(s);
+      setTimeout(() => s.classList.add('visible'), 10);
+      setTimeout(() => s.classList.remove('visible'), 3000);
+      setTimeout(() => s.remove(), 3500);
+    }
+
+    // Preview content (video, fact image, or pdf)
+    function showRecommendation(type, src, title = '', caption = '') {
+      const body = document.getElementById('rewardBody');
+      body.innerHTML = '';
+
+      if (type === 'video') {
+        // extract YouTube id
+        let id = null;
+        try {
+          const u = new URL(src);
+          id = u.searchParams.get('v') || u.pathname.split('/').pop();
+        } catch (e) {
+          const m = src.match(/(?:v=|youtu\.be\/|embed\/|\/v\/)([A-Za-z0-9_-]{11})/);
+          id = m ? m[1] : src;
+        }
+        if (id && id.length > 11) id = id.slice(-11);
+        const embed = `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+        body.innerHTML = `\n          <h3>${title || 'Video'}</h3>\n          <div style="position:relative;padding-bottom:56.25%;height:0;margin-bottom:12px;">\n            <iframe src="${embed}" style="position:absolute;left:0;top:0;width:100%;height:100%;border:0;" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>\n          </div>\n          <p class="muted">${caption || ''}</p>\n          <p><button class="btn primary" onclick="redeem(5)">Redeem 5 pts</button></p>\n        `;
+      } else if (type === 'fact') {
+        body.innerHTML = `\n          <h3>${title || 'Interesting fact'}</h3>\n          <img src="${src}" alt="${title}" style="max-width:100%;border-radius:8px;margin-bottom:8px;">\n          <p class="muted">${caption || ''}</p>\n          <p><button class="btn primary" onclick="redeem(2)">Redeem 2 pts</button></p>\n        `;
+      } else if (type === 'pdf') {
+        // show embedded pdf and download link
+        const encoded = encodeURI(src);
+        body.innerHTML = `\n          <h3>${title || 'PDF Preview'}</h3>\n          <div style="height:60vh;margin-bottom:12px;">\n            <iframe src="${encoded}" style="width:100%;height:100%;border:0;"></iframe>\n          </div>\n          <p class="muted">${caption || ''}</p>\n          <p><a class="btn primary" href="${encoded}" target="_blank" rel="noopener">Open / Download PDF</a> <button class="btn" onclick="redeem(15)">Redeem 15 pts</button></p>\n        `;
+      }
+
+      const modal = document.getElementById('rewardModal');
+      modal.classList.remove('hidden');
+      modal.setAttribute('aria-hidden','false');
+    }
+
+    // attach PDF preview button
+    const pdfPreviewBtn = document.getElementById('pdfPreviewBtn');
+    if (pdfPreviewBtn) {
+      pdfPreviewBtn.addEventListener('click', () => {
+        // relative path to the attached PDF in the project
+        showRecommendation('pdf', 'I Decided to live as me.pdf', 'I Decided to live as me', 'Preview of the attached book PDF.');
+      });
+    }
+
+    // Wire up events
+    startBtn.addEventListener('click', () => { startTimer(); });
+    pauseBtn.addEventListener('click', () => { pauseTimer(); });
+    resetBtn.addEventListener('click', () => { resetTimer(); });
+    studyInput.addEventListener('change', () => { if (mode==='study') setDisplayForMode(); });
+    shortBreakInput.addEventListener('change', () => { if (mode==='short') setDisplayForMode(); });
+    longBreakInput.addEventListener('change', () => { if (mode==='long') setDisplayForMode(); });
+    longEveryInput.addEventListener('change', () => {});
+    redeemBtn.addEventListener('click', openReward);
+    clearLogBtn.addEventListener('click', () => { if (confirm('Clear session history?')) clearSessions(); });
+
+    // Initialize
+    setDisplayForMode();
+    updateDisplay();
+    loadState();
+
+    // allow pressing space to start/pause when focused on page
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') {
+        e.preventDefault();
+        if (timer) pauseTimer(); else startTimer();
+      }
+    });
+
+    // Expose hooks for timer.js if it wants to integrate
+    window.dramadoro = window.dramadoro || {};
+    window.dramadoro.getState = () => ({ mode, remaining, total, completedSessions });
+
+  </script>
+</body>
+</html>
